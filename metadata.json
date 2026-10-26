@@ -1,0 +1,6 @@
+{
+  "name": "RadiusHead AI",
+  "description": "Interactieve orthopedische demonstratie-app voor casusbespreking en gestructureerde analyse van radiuskopfracturen.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
