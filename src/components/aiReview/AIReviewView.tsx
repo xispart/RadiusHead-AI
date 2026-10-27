@@ -41,6 +41,7 @@ import {
   createDefaultClinicianReviews,
 } from '../../utils/orthoRules';
 import { requestLiveAIReview, getDeterministicSampleReview } from '../../services/aiService';
+import { ClinicalTreatmentGuidelines } from './ClinicalTreatmentGuidelines';
 
 interface Props {
   activeCase: Case;
@@ -549,6 +550,9 @@ export const AIReviewView: React.FC<Props> = ({
               })}
             </div>
           </div>
+
+          {/* Evidence-Based Clinical Treatment Recommendations Component */}
+          <ClinicalTreatmentGuidelines activeCase={activeCase} onUpdateCase={onUpdateCase} />
 
           {/* Card 4: Ontbrekende Informatie */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">

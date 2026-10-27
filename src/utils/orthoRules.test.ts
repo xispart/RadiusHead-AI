@@ -130,3 +130,60 @@ test('mergeOrRetainClinicianReviews preserves existing edits when retainMode is 
   assert.equal(interpItem?.editedText, 'Clinician edited interp text');
   assert.equal(interpItem?.note, 'Verified with supervisor');
 });
+
+test('getMatchingMasonType correctly matches classification strings', async () => {
+  const { getMatchingMasonType, MASON_TYPES } = await import('./orthoRules');
+  assert.equal(MASON_TYPES.length, 4);
+  assert.equal(getMatchingMasonType('Type I (Niet-verplaatst)')?.typeKey, 'type_1');
+  assert.equal(getMatchingMasonType('Type II (Verplaatst wig- of randsegment)')?.typeKey, 'type_2');
+  assert.equal(getMatchingMasonType('Type III (Communitief)')?.typeKey, 'type_3');
+  assert.equal(getMatchingMasonType('Type IV (Mason-Johnston)')?.typeKey, 'type_4');
+  assert.equal(getMatchingMasonType('Onbekend'), undefined);
+});
+
+test('getClinicalTreatmentGuideline returns accurate evidence-based guidelines for each Mason type', async () => {
+  const { getClinicalTreatmentGuideline } = await import('./orthoRules');
+  const g1 = getClinicalTreatmentGuideline('Type I (Niet-verplaatst)');
+  assert.equal(g1.primaryStrategy, 'conservatief');
+  assert.ok(g1.recommendations.length > 0);
+  assert.ok(g1.evidenceCitations.some((c) => c.author.includes('Duckworth')));
+
+  const g2 = getClinicalTreatmentGuideline('Type II (Verplaatst wig- of randsegment)');
+  assert.equal(g2.primaryStrategy, 'orif_versus_conservatief');
+  assert.ok(g2.criticalDecisionFactors.some((f) => f.includes('rotatieblokkade')));
+
+  const g3 = getClinicalTreatmentGuideline('Type III (Communitief)');
+  assert.equal(g3.primaryStrategy, 'orif_versus_artroplastiek');
+  assert.ok(g3.recommendations.some((r) => r.modality.includes('Radiuskopvervanging')));
+
+  const g4 = getClinicalTreatmentGuideline('Type IV (Mason-Johnston)');
+  assert.equal(g4.primaryStrategy, 'stabilisatie_complexe_instabiliteit');
+  assert.ok(g4.evidenceCitations.some((c) => c.author.includes('McKee')));
+});
+
+test('evaluateMasonTypeMatch correctly scores and explains criteria matches against case features', async () => {
+  const { evaluateMasonTypeMatch, MASON_TYPES } = await import('./orthoRules');
+
+  // Case with comminuted fracture, 3.2mm displacement, no dislocation
+  const comminutedFeatures = {
+    fragmentation: 'multiple' as const,
+    displacement: 'present' as const,
+    measuredDisplacementMm: 3.2,
+    articularInvolvement: 'present' as const,
+  };
+  const noInjuries = { dislocation: 'absent' as const };
+
+  const type1Match = evaluateMasonTypeMatch(MASON_TYPES[0], comminutedFeatures, noInjuries, 'Type III');
+  assert.equal(type1Match.matchesCount, 1); // Only dislocation is absent matches; fragmentation and displacement fail
+
+  const type3Match = evaluateMasonTypeMatch(MASON_TYPES[2], comminutedFeatures, noInjuries, 'Type III (Communitief)');
+  assert.equal(type3Match.matchesCount, 3); // All 3 match!
+  assert.equal(type3Match.isRecommended, true);
+
+  // Case with dislocation
+  const dislocationInjuries = { dislocation: 'present' as const };
+  const type4Match = evaluateMasonTypeMatch(MASON_TYPES[3], comminutedFeatures, dislocationInjuries, 'Type IV');
+  assert.equal(type4Match.matchesCount, 3);
+  assert.equal(type4Match.isRecommended, true);
+});
+

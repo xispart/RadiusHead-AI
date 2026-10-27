@@ -18,7 +18,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { Case, ClinicianReview } from '../../types/ortho';
-import { getCategoryLabel } from '../../utils/orthoRules';
+import { getCategoryLabel, getClinicalTreatmentGuideline } from '../../utils/orthoRules';
 
 interface Props {
   activeCase: Case;
@@ -325,6 +325,56 @@ LET OP: DEMONSTRATIEPROTOTYPE — NIET VOOR KLINISCHE BESLUITVORMING.`;
             Nog geen AI-analyse uitgevoerd voor deze casus.
           </div>
         )}
+
+        {/* Section 5: Evidence-based Behandelrichtlijnen & Stafafweging */}
+        {(() => {
+          const guideline = getClinicalTreatmentGuideline(activeCase.fractureFeatures.classificationValue);
+          const treatmentReview = clinicianMap.get('treatment_recommendation');
+          return (
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 pb-1 mb-2 border-b border-slate-300">
+                5. Behandelrichtlijnen volgens Evidence ({guideline.masonTitle})
+              </h3>
+              <div className="p-3 bg-slate-50 rounded border border-slate-200 text-xs space-y-2.5">
+                <div>
+                  <span className="font-bold text-slate-900 block">{guideline.strategyTitle}</span>
+                  <p className="text-slate-800 leading-relaxed mt-0.5">{guideline.summary}</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <span className="font-bold text-slate-800 block text-[11px] mb-1">Besluitvormingscriteria:</span>
+                    <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-slate-700">
+                      {guideline.criticalDecisionFactors.map((factor, idx) => (
+                        <li key={idx}>{factor}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div>
+                    <span className="font-bold text-slate-800 block text-[11px] mb-1">Behandelmodaliteiten & Bewijskracht:</span>
+                    <ul className="space-y-1 text-[11px] text-slate-700">
+                      {guideline.recommendations.map((mod, idx) => (
+                        <li key={idx} className="border-l-2 border-teal-600 pl-2">
+                          <span className="font-semibold text-slate-900">{mod.modality}</span>{' '}
+                          <span className="text-[10px] text-slate-500 font-mono">[{mod.levelOfEvidence}]</span>
+                          <span className="block text-slate-600">{mod.suitability}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                {treatmentReview?.note && (
+                  <div className="mt-2 p-2.5 bg-teal-50/80 rounded border border-teal-200 text-xs">
+                    <span className="font-bold text-teal-950 block">Conclusie / Afweging Stafbespreking:</span>
+                    <p className="text-teal-900 italic mt-0.5">{treatmentReview.note}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Footer & Final Verification Signoff */}
         <div className="pt-6 border-t-2 border-slate-900 text-xs text-slate-600 space-y-2">

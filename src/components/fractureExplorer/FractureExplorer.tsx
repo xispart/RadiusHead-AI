@@ -13,8 +13,32 @@ import {
   Maximize2,
   CheckCircle2,
   AlertCircle,
+  Sparkles,
+  Check,
+  ShieldCheck,
+  ArrowRight,
+  Info,
+  Sliders,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
-import { FractureFeatures } from '../../types/ortho';
+import {
+  FractureFeatures,
+  AssociatedInjuries,
+  ClassificationSource,
+  FragmentationRating,
+  FeaturePresence,
+  StabilityRating,
+  Case,
+} from '../../types/ortho';
+import {
+  suggestMasonClassification,
+  MASON_TYPES,
+  getMatchingMasonType,
+  MasonTypeDefinition,
+  evaluateMasonTypeMatch,
+  MasonTypeMatchResult,
+} from '../../utils/orthoRules';
 
 type ViewAngle = 'anterieur' | 'posterieur' | 'lateraal';
 
@@ -26,22 +50,213 @@ type AnatomicalFeatureKey =
   | 'verplaatsing';
 
 interface Props {
-  fractureFeatures: FractureFeatures;
+  activeCase?: Case;
+  onUpdateCase?: (updatedCase: Case) => void;
+  fractureFeatures?: FractureFeatures;
+  associatedInjuries?: AssociatedInjuries;
   onUpdateFeatures?: (updated: Partial<FractureFeatures>) => void;
+  onUpdateCaseData?: (
+    updatedFeatures: Partial<FractureFeatures>,
+    updatedInjuries?: Partial<AssociatedInjuries>
+  ) => void;
 }
 
 export const FractureExplorer: React.FC<Props> = ({
-  fractureFeatures,
+  activeCase,
+  onUpdateCase,
+  fractureFeatures: propFeatures,
+  associatedInjuries: propInjuries,
   onUpdateFeatures,
+  onUpdateCaseData,
 }) => {
   const [activeView, setActiveView] = useState<ViewAngle>('anterieur');
   const [selectedFeature, setSelectedFeature] = useState<AnatomicalFeatureKey | null>(
     'fractuurfragmenten'
   );
   const [showMeasurements, setShowMeasurements] = useState(true);
-  const [simulatedFragmentCount, setSimulatedFragmentCount] = useState<number>(
-    fractureFeatures.fragmentation === 'multiple' ? 3 : 1
+  const [statusFeedback, setStatusFeedback] = useState<string | null>(null);
+
+  // Resolve fracture features & injuries from activeCase if provided, otherwise from props/fallbacks
+  const fractureFeatures: FractureFeatures =
+    activeCase?.fractureFeatures ||
+    propFeatures || {
+      fragmentation: 'multiple',
+      articularInvolvement: 'present',
+      displacement: 'present',
+      measuredDisplacementMm: 3.2,
+      stability: 'uncertain',
+      classificationValue: 'Type III (Communitief)',
+      classificationSource: 'clinician-entered',
+    };
+
+  const associatedInjuries: AssociatedInjuries =
+    activeCase?.associatedInjuries ||
+    propInjuries || {
+      dislocation: 'absent',
+      coronoid: 'absent',
+      ligamentConcern: 'absent',
+      otherFindings: '',
+    };
+
+  // Sync simulated fragment count with current case fracture characteristics
+  const simulatedFragmentCount =
+    fractureFeatures.fragmentation === 'multiple'
+      ? 3
+      : fractureFeatures.fragmentation === 'limited'
+      ? 2
+      : 1;
+
+  // Calculate algorithmic Mason recommendation from identified characteristics
+  const recommendation = suggestMasonClassification(fractureFeatures, associatedInjuries);
+  const activeMasonType = getMatchingMasonType(fractureFeatures.classificationValue);
+
+  // Dynamic evaluation of all 4 Mason types based on current fracture features
+  const evaluatedMasonTypes: MasonTypeMatchResult[] = MASON_TYPES.map((typeDef) =>
+    evaluateMasonTypeMatch(typeDef, fractureFeatures, associatedInjuries, recommendation.suggestedType)
   );
+
+  const showFeedback = (msg: string) => {
+    setStatusFeedback(msg);
+    setTimeout(() => {
+      setStatusFeedback(null);
+    }, 3500);
+  };
+
+  const handleApplyMasonType = (typeDef: MasonTypeDefinition, syncPresets = false) => {
+    const updatedFeatures: Partial<FractureFeatures> = {
+      classificationValue: typeDef.name,
+      classificationSource: 'clinician-entered',
+    };
+
+    if (syncPresets) {
+      Object.assign(updatedFeatures, typeDef.presetFeatures);
+    }
+
+    const updatedInjuries = syncPresets && typeDef.presetInjuries ? typeDef.presetInjuries : undefined;
+
+    // 1. Update activeCase if parent provided onUpdateCase
+    if (onUpdateCase && activeCase) {
+      onUpdateCase({
+        ...activeCase,
+        fractureFeatures: {
+          ...activeCase.fractureFeatures,
+          ...updatedFeatures,
+        },
+        associatedInjuries: updatedInjuries
+          ? {
+              ...activeCase.associatedInjuries,
+              ...updatedInjuries,
+            }
+          : activeCase.associatedInjuries,
+      });
+    }
+
+    // 2. Delegate to onUpdateCaseData or onUpdateFeatures if available
+    if (onUpdateCaseData) {
+      onUpdateCaseData(updatedFeatures, updatedInjuries);
+    } else if (onUpdateFeatures) {
+      onUpdateFeatures(updatedFeatures);
+    }
+
+    showFeedback(
+      syncPresets
+        ? `Classificatie ${typeDef.shortLabel} geselecteerd en bijbehorende morfologische parameters gesynchroniseerd.`
+        : `Classificatie in actieve casus bijgewerkt naar ${typeDef.shortLabel} (${typeDef.name}).`
+    );
+  };
+
+  const handleApplyRecommendation = () => {
+    const recommendedDef = getMatchingMasonType(recommendation.suggestedType);
+    if (recommendedDef) {
+      handleApplyMasonType(recommendedDef, false);
+    } else {
+      const updatedFeatures: Partial<FractureFeatures> = {
+        classificationValue: recommendation.suggestedType,
+        classificationSource: 'ai-suggested',
+      };
+      if (onUpdateCase && activeCase) {
+        onUpdateCase({
+          ...activeCase,
+          fractureFeatures: {
+            ...activeCase.fractureFeatures,
+            ...updatedFeatures,
+          },
+        });
+      }
+      if (onUpdateFeatures) {
+        onUpdateFeatures(updatedFeatures);
+      }
+      showFeedback(`Aanbevolen classificatie ${recommendation.suggestedType} toegepast op casus.`);
+    }
+  };
+
+  const handleUpdateSource = (newSource: ClassificationSource) => {
+    const updatedFeatures: Partial<FractureFeatures> = { classificationSource: newSource };
+    if (onUpdateCase && activeCase) {
+      onUpdateCase({
+        ...activeCase,
+        fractureFeatures: {
+          ...activeCase.fractureFeatures,
+          ...updatedFeatures,
+        },
+      });
+    }
+    if (onUpdateFeatures) {
+      onUpdateFeatures(updatedFeatures);
+    }
+    showFeedback(`Bron van classificatie gewijzigd naar: ${newSource === 'clinician-entered' ? 'Door arts' : 'AI-suggestie'}.`);
+  };
+
+  const handleCharacteristicChange = (
+    key: keyof FractureFeatures,
+    value: any,
+    description: string
+  ) => {
+    const updatedFeatures = { [key]: value };
+    if (onUpdateCase && activeCase) {
+      onUpdateCase({
+        ...activeCase,
+        fractureFeatures: {
+          ...activeCase.fractureFeatures,
+          ...updatedFeatures,
+        },
+      });
+    }
+    if (onUpdateFeatures) {
+      onUpdateFeatures(updatedFeatures);
+    }
+    showFeedback(`Kenmerk gewijzigd: ${description}.`);
+  };
+
+  const handleDislocationChange = (presence: FeaturePresence) => {
+    const updatedInjuries: Partial<AssociatedInjuries> = { dislocation: presence };
+    const updatedFeatures: Partial<FractureFeatures> = {};
+    if (presence === 'present') {
+      updatedFeatures.classificationValue = 'Type IV (Mason-Johnston)';
+      updatedFeatures.classificationSource = 'clinician-entered';
+    }
+    if (onUpdateCase && activeCase) {
+      onUpdateCase({
+        ...activeCase,
+        fractureFeatures: {
+          ...activeCase.fractureFeatures,
+          ...updatedFeatures,
+        },
+        associatedInjuries: {
+          ...activeCase.associatedInjuries,
+          ...updatedInjuries,
+        },
+      });
+    }
+    if (onUpdateCaseData) {
+      onUpdateCaseData(updatedFeatures, updatedInjuries);
+    }
+    showFeedback(
+      presence === 'present'
+        ? 'Elleboogluxatie aanwezig: Mason Type IV geactiveerd in casus.'
+        : 'Geassocieerde dislocatie ingesteld op afwezig.'
+    );
+  };
 
   const resetView = () => {
     setActiveView('anterieur');
@@ -103,15 +318,15 @@ export const FractureExplorer: React.FC<Props> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="px-2.5 py-0.5 rounded text-[11px] font-semibold bg-teal-950 border border-teal-600/40 text-teal-300 uppercase tracking-wider">
-                Interactieve Morfologie
+                Interactieve Morfologie &amp; Classificatie
               </span>
-              <span className="text-xs text-slate-400">Versie 1.0</span>
+              <span className="text-xs text-slate-400">Versie 1.1</span>
             </div>
             <h2 className="text-xl font-bold text-white mt-1">
-              Fractuur Verkenner — Caput Radii
+              Fractuur Verkenner &amp; Mason Selector
             </h2>
             <p className="text-sm text-slate-400 mt-0.5">
-              Interactief anatomisch diagram voor educatieve evaluatie van breuklijnen en gewrichtscongruentie.
+              Interactief anatomisch diagram met dynamische Mason-classificatieselectie op basis van geïdentificeerde fractuurkenmerken.
             </p>
           </div>
 
@@ -140,12 +355,20 @@ export const FractureExplorer: React.FC<Props> = ({
             Fictief morfologisch model
           </span>
         </div>
+
+        {/* Live feedback banner */}
+        {statusFeedback && (
+          <div className="mt-3 p-3 bg-teal-950/80 border border-teal-500/50 rounded-lg text-xs text-teal-200 flex items-center gap-2 shadow-sm animate-fade-in">
+            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
+            <span>{statusFeedback}</span>
+          </div>
+        )}
       </div>
 
       {/* Main interactive area: 2 Columns */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Interactive Anatomical SVG Viewer */}
-        <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col">
+        {/* Left Column: Interactive Anatomical SVG Viewer (7 cols) */}
+        <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col space-y-4">
           {/* Top toolbar inside viewer */}
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800">
             {/* View angle toggle */}
@@ -180,7 +403,7 @@ export const FractureExplorer: React.FC<Props> = ({
           </div>
 
           {/* SVG Canvas Area */}
-          <div className="relative w-full h-[460px] bg-slate-950/90 rounded-lg my-4 flex items-center justify-center p-4 overflow-hidden border border-slate-800/80">
+          <div className="relative w-full h-[460px] bg-slate-950/90 rounded-lg flex items-center justify-center p-4 overflow-hidden border border-slate-800/80">
             {/* Subtle background anatomical grid */}
             <svg
               className="absolute inset-0 w-full h-full opacity-10 pointer-events-none"
@@ -491,9 +714,420 @@ export const FractureExplorer: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Right Column: Anatomical & Clinical Details Side Panel */}
-        <div className="lg:col-span-5 space-y-4">
-          {/* Active Feature Detail Card */}
+        {/* Right Column: Mason Selector & Anatomical Guides (5 cols) */}
+        <div className="lg:col-span-5 space-y-5">
+          {/* MASON CLASSIFICATION SELECTOR CARD */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-teal-400" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Mason Classificatie Selector
+                </h3>
+              </div>
+              <span className="text-[11px] text-teal-400 font-semibold font-mono">
+                Hotchkiss / Johnston
+              </span>
+            </div>
+
+            {/* Quick 1-Click Type Switcher Bar */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span className="font-semibold uppercase tracking-wider">Snelle Typekeuze:</span>
+                <span className="text-slate-500">Klik om type direct in casus te activeren</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {MASON_TYPES.map((typeDef) => {
+                  const isSelected = activeMasonType?.typeKey === typeDef.typeKey;
+                  const matchResult = evaluatedMasonTypes.find((m) => m.typeKey === typeDef.typeKey);
+                  const isRecommended = matchResult?.isRecommended;
+
+                  return (
+                    <button
+                      key={typeDef.typeKey}
+                      onClick={() => handleApplyMasonType(typeDef, false)}
+                      className={`py-2 px-1 rounded-lg text-xs font-bold transition flex flex-col items-center justify-center gap-0.5 border cursor-pointer ${
+                        isSelected
+                          ? 'bg-teal-600 border-teal-500 text-white shadow-md ring-1 ring-teal-400/50'
+                          : isRecommended
+                          ? 'bg-slate-950 border-amber-500/60 text-amber-300 hover:bg-slate-800'
+                          : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                      title={`Selecteer ${typeDef.name} (${matchResult?.matchesCount ?? 0}/${matchResult?.totalCount ?? 3} criteria matchen)`}
+                    >
+                      <div className="flex items-center gap-1">
+                        {isSelected && <Check className="w-3 h-3 text-white shrink-0" />}
+                        <span>{typeDef.shortLabel}</span>
+                        {isRecommended && !isSelected && (
+                          <span className="text-[10px] text-amber-400">★</span>
+                        )}
+                      </div>
+                      <span
+                        className={`text-[9px] px-1 rounded font-mono ${
+                          isSelected
+                            ? 'bg-teal-700/80 text-teal-100'
+                            : matchResult?.matchesCount === matchResult?.totalCount
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
+                            : 'text-slate-400'
+                        }`}
+                      >
+                        {matchResult ? `${matchResult.matchesCount}/${matchResult.totalCount}` : '—'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Current Classification Status Header */}
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Actieve Casusclassificatie:</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                    activeMasonType
+                      ? activeMasonType.badgeColor
+                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  {fractureFeatures.classificationValue || 'Niet beoordeeld'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/60">
+                <span className="text-slate-500">Bron van registratie:</span>
+                <div className="inline-flex rounded-lg bg-slate-900 p-0.5 border border-slate-800">
+                  <button
+                    onClick={() => handleUpdateSource('clinician-entered')}
+                    className={`px-2 py-0.5 text-[10px] rounded font-medium transition cursor-pointer ${
+                      fractureFeatures.classificationSource === 'clinician-entered'
+                        ? 'bg-teal-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Door arts
+                  </button>
+                  <button
+                    onClick={() => handleUpdateSource('ai-suggested')}
+                    className={`px-2 py-0.5 text-[10px] rounded font-medium transition cursor-pointer ${
+                      fractureFeatures.classificationSource === 'ai-suggested'
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    AI-suggestie
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Algorithmic Recommendation Banner */}
+            <div className="p-3.5 bg-gradient-to-r from-teal-950/70 via-slate-950 to-slate-950 border border-teal-500/40 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-teal-300 text-xs font-semibold">
+                  <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                  <span>Aanbevolen op basis van morfologie:</span>
+                </div>
+                <span className="text-xs font-bold text-teal-200 bg-teal-900/80 px-2 py-0.5 rounded border border-teal-600/50">
+                  {recommendation.suggestedType}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-snug">
+                {recommendation.rationale}
+              </p>
+              {fractureFeatures.classificationValue !== recommendation.suggestedType && (
+                <button
+                  onClick={handleApplyRecommendation}
+                  className="w-full mt-1.5 py-1.5 px-3 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Neem aanbeveling direct over in casus ({recommendation.suggestedType.split(' ')[0]} {recommendation.suggestedType.split(' ')[1] || ''})</span>
+                </button>
+              )}
+            </div>
+
+            {/* Interactive Mason Type Selector Cards (I, II, III, IV) */}
+            <div className="space-y-2.5 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
+                  Selecteer Type op basis van kenmerken:
+                </span>
+                <span className="text-[10px] text-slate-500">Live compatibiliteit</span>
+              </div>
+
+              <div className="space-y-2.5">
+                {MASON_TYPES.map((typeDef) => {
+                  const isSelected = activeMasonType?.typeKey === typeDef.typeKey;
+                  const matchResult = evaluatedMasonTypes.find((m) => m.typeKey === typeDef.typeKey);
+                  const isRecommended = matchResult?.isRecommended;
+                  const allMatched = matchResult && matchResult.matchesCount === matchResult.totalCount;
+
+                  return (
+                    <div
+                      key={typeDef.typeKey}
+                      className={`p-3.5 rounded-xl border transition text-xs space-y-2.5 ${
+                        isSelected
+                          ? 'bg-slate-950 border-teal-500 ring-1 ring-teal-500/40 shadow-md'
+                          : isRecommended
+                          ? 'bg-slate-950/80 border-teal-500/40 hover:border-teal-500/70'
+                          : 'bg-slate-950/60 border-slate-800/90 hover:bg-slate-950 hover:border-slate-700'
+                      }`}
+                    >
+                      {/* Card Header */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-xs font-bold border ${
+                              typeDef.badgeColor
+                            }`}
+                          >
+                            {typeDef.shortLabel}
+                          </span>
+                          <span className="font-bold text-slate-100 text-xs">
+                            {typeDef.name}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {isRecommended && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-950 text-amber-300 border border-amber-700/80">
+                              ★ Aanbevolen
+                            </span>
+                          )}
+                          {isSelected && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-950 text-teal-300 border border-teal-700">
+                              ✓ Actief in casus
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Criteria Match Ratio Pill */}
+                      {matchResult && (
+                        <div className="flex items-center justify-between text-[11px] p-2 rounded-lg bg-slate-900/90 border border-slate-800">
+                          <span className="text-slate-400">Match met huidige casus:</span>
+                          <span
+                            className={`font-semibold flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
+                              allMatched
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/80'
+                                : matchResult.matchesCount >= 2
+                                ? 'bg-teal-950 text-teal-300 border border-teal-800/60'
+                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                            }`}
+                          >
+                            {allMatched && <CheckCircle className="w-3 h-3 text-emerald-400" />}
+                            <span>
+                              {matchResult.matchesCount} van {matchResult.totalCount} criteria voldaan
+                            </span>
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Criteria Comparison Breakdown */}
+                      {matchResult && (
+                        <div className="space-y-1 bg-slate-950/70 p-2.5 rounded-lg border border-slate-900">
+                          {matchResult.criteria.map((c, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-start justify-between text-[11px] gap-2 py-0.5"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {c.matched ? (
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                ) : (
+                                  <XCircle className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                )}
+                                <span
+                                  className={`truncate ${
+                                    c.matched ? 'text-slate-200 font-medium' : 'text-slate-400'
+                                  }`}
+                                >
+                                  {c.criterionDescription}
+                                </span>
+                              </div>
+                              <span
+                                className={`text-[10px] font-mono shrink-0 px-1.5 py-0.2 rounded ${
+                                  c.matched
+                                    ? 'text-emerald-400 bg-emerald-950/60 border border-emerald-800/40'
+                                    : 'text-slate-400 bg-slate-900'
+                                }`}
+                              >
+                                {c.currentValueDescription}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Clinical Implication */}
+                      <p className="text-[11px] text-slate-400 leading-snug italic">
+                        {typeDef.clinicalImplication}
+                      </p>
+
+                      {/* Card Action Buttons */}
+                      <div className="pt-2 border-t border-slate-800/80 flex items-center gap-2">
+                        {isSelected ? (
+                          <div className="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-teal-950/60 border border-teal-600/40 text-teal-300 flex items-center justify-center gap-1.5">
+                            <Check className="w-3.5 h-3.5 text-teal-400" />
+                            <span>Geselecteerd in casus</span>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleApplyMasonType(typeDef, false)}
+                            className="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-teal-600 hover:bg-teal-500 text-white transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Kies {typeDef.shortLabel}</span>
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => handleApplyMasonType(typeDef, true)}
+                          className="py-1.5 px-2.5 rounded-lg text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition flex items-center gap-1 shrink-0 cursor-pointer"
+                          title={`Stel ook verplaatsing, fragmentatie en luxatie in passend bij ${typeDef.shortLabel}`}
+                        >
+                          <span>Sync kenmerken</span>
+                          <ArrowRight className="w-3 h-3 text-slate-400" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Interactive Morphological Characteristic Adjusters */}
+            <div className="pt-3 border-t border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity className="w-3.5 h-3.5 text-teal-400" />
+                  <span>Geïdentificeerde Morfologie (Live Update)</span>
+                </span>
+                <span className="text-[11px] text-slate-400">Directe beïnvloeding</span>
+              </div>
+
+              <div className="space-y-2.5 text-xs">
+                {/* Fragmentation Selector */}
+                <div className="flex items-center justify-between p-2.5 bg-slate-950 rounded-lg border border-slate-800">
+                  <span className="text-slate-300 font-medium">Fragmentatiegraad:</span>
+                  <div className="flex gap-1.5">
+                    {[
+                      { val: 'limited', label: '1-2 wig' },
+                      { val: 'multiple', label: '≥3 comminutief' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.val}
+                        onClick={() =>
+                          handleCharacteristicChange(
+                            'fragmentation',
+                            opt.val as FragmentationRating,
+                            `Fragmentatie ingesteld op ${opt.label}`
+                          )
+                        }
+                        className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition cursor-pointer ${
+                          fractureFeatures.fragmentation === opt.val
+                            ? 'bg-teal-600 border-teal-500 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Displacement & Measured mm */}
+                <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300 font-medium">Verplaatsing &gt; 2 mm:</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() =>
+                          handleCharacteristicChange(
+                            'displacement',
+                            'absent',
+                            'Verplaatsing gemarkeerd als afwezig (< 2 mm)'
+                          )
+                        }
+                        className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition cursor-pointer ${
+                          fractureFeatures.displacement === 'absent'
+                            ? 'bg-emerald-600 border-emerald-500 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        Nee (&lt; 2mm)
+                      </button>
+                      <button
+                        onClick={() =>
+                          handleCharacteristicChange(
+                            'displacement',
+                            'present',
+                            'Verplaatsing gemarkeerd als aanwezig (≥ 2 mm)'
+                          )
+                        }
+                        className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition cursor-pointer ${
+                          fractureFeatures.displacement === 'present'
+                            ? 'bg-amber-600 border-amber-500 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        Ja (≥ 2mm)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-900">
+                    <span className="text-slate-400 text-[11px]">Gemeten step-off (mm):</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="20"
+                      value={fractureFeatures.measuredDisplacementMm ?? 0}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        handleCharacteristicChange(
+                          'measuredDisplacementMm',
+                          isNaN(val) ? 0 : val,
+                          `Step-off aangepast naar ${val} mm`
+                        );
+                      }}
+                      className="w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-slate-100 text-xs font-mono text-right focus:outline-none focus:border-teal-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Associated Dislocation (for Mason IV) */}
+                <div className="flex items-center justify-between p-2.5 bg-slate-950 rounded-lg border border-slate-800">
+                  <span className="text-slate-300 font-medium">Elleboogdislocatie (Luxatie):</span>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => handleDislocationChange('absent')}
+                      className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition cursor-pointer ${
+                        associatedInjuries?.dislocation !== 'present'
+                          ? 'bg-teal-600 border-teal-500 text-white'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      Geen
+                    </button>
+                    <button
+                      onClick={() => handleDislocationChange('present')}
+                      className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition cursor-pointer ${
+                        associatedInjuries?.dislocation === 'present'
+                          ? 'bg-rose-600 border-rose-500 text-white'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      Luxatie (Type IV)
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Active Anatomical Detail Card */}
           {selectedFeature ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -540,73 +1174,6 @@ export const FractureExplorer: React.FC<Props> = ({
               </p>
             </div>
           )}
-
-          {/* Interactive Simulation Controls */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-            <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-              <Activity className="w-4 h-4 text-teal-400" />
-              <span>Simulatie van fragmentatiegraad</span>
-            </h4>
-
-            <div>
-              <div className="flex justify-between text-xs text-slate-300 mb-1.5">
-                <span>Aantal fragmenten in simulatie:</span>
-                <span className="font-semibold text-teal-400">{simulatedFragmentCount} fragment(en)</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[1, 2, 3].map((count) => (
-                  <button
-                    key={count}
-                    onClick={() => {
-                      setSimulatedFragmentCount(count);
-                      if (onUpdateFeatures) {
-                        onUpdateFeatures({
-                          fragmentation: count >= 3 ? 'multiple' : 'limited',
-                        });
-                      }
-                    }}
-                    className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
-                      simulatedFragmentCount === count
-                        ? 'bg-teal-600 border-teal-500 text-white'
-                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    {count === 1 ? '1 fragment (Wig)' : count === 2 ? '2 fragmenten' : '3+ fragmenten (Comminutie)'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Clinical Correlation Card */}
-            <div className="p-3.5 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-2">
-              <div className="flex items-center gap-2 text-slate-300 font-semibold">
-                <CheckCircle2 className="w-4 h-4 text-teal-400" />
-                <span>Casuskoppeling (Huidig dossier):</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
-                <div>
-                  <span className="text-slate-500 block">Classificatie:</span>
-                  <span className="text-slate-200 font-medium">{fractureFeatures.classificationValue}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Gemeten stap:</span>
-                  <span className="text-slate-200 font-medium">
-                    {fractureFeatures.measuredDisplacementMm ? `${fractureFeatures.measuredDisplacementMm} mm` : 'Geen'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Stabiliteit:</span>
-                  <span className="text-slate-200 font-medium capitalize">{fractureFeatures.stability}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Bron classificatie:</span>
-                  <span className="text-slate-200 font-medium capitalize">
-                    {fractureFeatures.classificationSource}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

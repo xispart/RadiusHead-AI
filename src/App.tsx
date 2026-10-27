@@ -42,6 +42,25 @@ export default function App() {
     }));
   };
 
+  const handleUpdateCaseData = (
+    updatedFeatures: Partial<FractureFeatures>,
+    updatedInjuries?: Partial<typeof activeCase.associatedInjuries>
+  ) => {
+    setActiveCase((prev) => ({
+      ...prev,
+      fractureFeatures: {
+        ...prev.fractureFeatures,
+        ...updatedFeatures,
+      },
+      associatedInjuries: updatedInjuries
+        ? {
+            ...prev.associatedInjuries,
+            ...updatedInjuries,
+          }
+        : prev.associatedInjuries,
+    }));
+  };
+
   return (
     <Shell
       activeTab={activeTab}
@@ -74,8 +93,12 @@ export default function App() {
 
       {activeTab === 'fractureExplorer' && (
         <FractureExplorer
+          activeCase={activeCase}
+          onUpdateCase={handleSaveCase}
           fractureFeatures={activeCase.fractureFeatures}
+          associatedInjuries={activeCase.associatedInjuries}
           onUpdateFeatures={handleUpdateFractureFeatures}
+          onUpdateCaseData={handleUpdateCaseData}
         />
       )}
 

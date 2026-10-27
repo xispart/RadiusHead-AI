@@ -112,6 +112,34 @@ export interface ClinicianReview {
   updatedAt: string;
 }
 
+export interface ClinicalTreatmentGuideline {
+  masonTypeKey: string;
+  masonTitle: string;
+  primaryStrategy:
+    | 'conservatief'
+    | 'orif_versus_conservatief'
+    | 'orif_versus_artroplastiek'
+    | 'stabilisatie_complexe_instabiliteit';
+  strategyTitle: string;
+  summary: string;
+  recommendations: {
+    modality: string;
+    description: string;
+    levelOfEvidence: string;
+    suitability: 'Eerste keus' | 'Bij specifieke criteria' | 'Gecontra-indiceerd bij instabiliteit';
+  }[];
+  criticalDecisionFactors: string[];
+  evidenceCitations: {
+    author: string;
+    title: string;
+    journal: string;
+    year: number;
+    takeaway: string;
+  }[];
+  rehabilitationProtocol: string;
+  contraindications: string[];
+}
+
 export interface Case {
   id: string;
   title: string;
